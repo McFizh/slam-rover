@@ -1,0 +1,17 @@
+# Enable spiram for camera to use
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# Move wifi buffers to psram, leaving more room for camera
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# Set flash size to 16MB for board: ESP32-S3-N16R8
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# Disable dhcp server and softAP
+CONFIG_LWIP_DHCPS=n
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
+
+# Bigger app partition
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
