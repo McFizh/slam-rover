@@ -9,14 +9,16 @@ namespace ui {
   constexpr SDL_Color TITLE_TEXT_COLOR{255, 255, 255, 255};
   constexpr SDL_Color BORDER_COLOR{200, 200, 200, 255};
 
-  Window::Window(std::string title, SDL_FRect windowBounds) : _title(std::move(title)), _windowBounds(windowBounds) {}
+  Window::Window(std::string title, SDL_FRect winBounds) : _title(std::move(title)) {
+    _windowBounds = SDL_FRect { winBounds.x, winBounds.y, winBounds.w + 2, winBounds.h + TITLE_BAR_HEIGHT + 1 };
+  }
 
   Window::~Window() { SDL_DestroyTexture(_titleTexture); }
 
   void Window::SetContentDrawer(ContentDrawer drawer) { _contentDrawer = drawer; }
 
   SDL_FRect Window::GetContentBounds() {
-    return {_windowBounds.x, _windowBounds.y + TITLE_BAR_HEIGHT, _windowBounds.w, _windowBounds.h - TITLE_BAR_HEIGHT};
+    return {_windowBounds.x + 1, _windowBounds.y + TITLE_BAR_HEIGHT, _windowBounds.w, _windowBounds.h - TITLE_BAR_HEIGHT};
   }
 
   void Window::CreateTitleTexture(SDL_Renderer *renderer, const SDL_FRect *titleBarBounds, TTF_Font *font) {

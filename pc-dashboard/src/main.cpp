@@ -1,7 +1,9 @@
 #include <string>
 
+#include <SDL3_image/SDL_image.h>
+
 #include "controller.hpp"
-#include "network.hpp"
+#include "network/network.hpp"
 #include "ui.hpp"
 
 SDL_Window *window;
@@ -37,7 +39,7 @@ int initSDL() {
     return 1;
   }
 
-  window = SDL_CreateWindow("Dashboard", 1000, 700, SDL_WINDOW_RESIZABLE);
+  window = SDL_CreateWindow("Dashboard", 1200, 800, SDL_WINDOW_RESIZABLE);
   if (!window) {
     SDL_Log("SDL_CreateWindow failed with error: %s", SDL_GetError());
     shutdownSDL();
@@ -63,13 +65,24 @@ int initSDL() {
   return 0;
 }
 
-bool pollEvents(input::ControllerHandler &controllers) {
+bool pollEvents(input::ControllerHandler &controllers, network::Client &commandClient) {
   SDL_Event event;
   bool runMainloop = true;
 
   while (SDL_PollEvent(&event)) {
     if (event.type == SDL_EVENT_QUIT || (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE)) {
       runMainloop = false;
+    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+      // Connect and disconnect keybindings
+      if (event.key.key == SDLK_C) {
+        if (commandClient.GetConnectionState() == network::ConnectionState::Disconnected) {
+          commandClient.Connect();
+        }
+      } else if (event.key.key == SDLK_D) {
+        if (commandClient.GetConnectionState() != network::ConnectionState::Disconnected) {
+          commandClient.Disconnect();
+        }
+      }
     }
 
     controllers.HandleEvent(event);
@@ -81,13 +94,37 @@ bool pollEvents(input::ControllerHandler &controllers) {
 /**
  * Run main loop in it's own method, so that windows and controllers get deleted before SDL cleanup is done
  */
-void runMainLoop() {
-  ui::Window camera_window("Camera feed", SDL_FRect{20, 40, 320, 320});
+void runMainLoop(network::Server &telemetryServer) {
+  ui::Window camera_window("Camera feed", SDL_FRect{20, 40, 640, 480});
   input::ControllerHandler controllers;
+  network::Client commandClient;
+
+  SDL_Texture *cameraTexture = NULL;
+  std::vector<uint8_t> jpegData;
+
+  camera_window.SetContentDrawer([&cameraTexture](SDL_Renderer *renderer, SDL_FRect content) {
+    if (!cameraTexture)
+      return;
+
+    float txtW, txtH;
+    SDL_GetTextureSize(cameraTexture, &txtW, &txtH);
+    SDL_FRect dstRect{content.x, content.y, txtW, txtH};
+    SDL_RenderTexture(renderer, cameraTexture, NULL, &dstRect);
+  });
 
   bool loopRunning = true;
   while (loopRunning) {
-    loopRunning = pollEvents(controllers);
+    loopRunning = pollEvents(controllers, commandClient);
+
+    if (telemetryServer.GetLatestFrame(jpegData)) {
+      SDL_IOStream *io = SDL_IOFromMem(jpegData.data(), jpegData.size());
+      SDL_Surface *surface = IMG_Load_IO(io, true);
+      if (surface) {
+        SDL_DestroyTexture(cameraTexture);
+        cameraTexture = SDL_CreateTextureFromSurface(renderer, surface);
+        SDL_DestroySurface(surface);
+      }
+    }
 
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
@@ -97,6 +134,8 @@ void runMainLoop() {
     SDL_RenderPresent(renderer);
     SDL_Delay(16);
   }
+
+  SDL_DestroyTexture(cameraTexture);
 }
 
 int main() {
@@ -104,7 +143,14 @@ int main() {
     return 1;
   }
 
-  runMainLoop();
+  network::Server telemetryServer;
+
+  if (telemetryServer.Start() == 0) {
+    runMainLoop(telemetryServer);
+    telemetryServer.Stop();
+  } else {
+    SDL_Log("Failed to start UDP telemetry server");
+  }
 
   // Cleanup and quit
   shutdownSDL();

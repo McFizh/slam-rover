@@ -12,12 +12,12 @@
 static const char *LOG_TAG = "slam_rover";
 
 /**
- * If net init fails -> board is useless -> enter failure loop
+ * If net/server/camera init fails -> board is useless -> enter failure loop
  */
-void net_fail_loop(esp_err_t led_err) {
+static void fail_loop(esp_err_t led_err, bool networkErr) {
   while (1) {
     if (led_err == ESP_OK)
-      set_rgb_led_color(255, 0, 0);
+      set_rgb_led_color(networkErr ? 255 : 0, 0, networkErr ? 0 : 255);
 
     vTaskDelay(500 / portTICK_PERIOD_MS);
 
@@ -42,7 +42,7 @@ void app_main(void) {
     ESP_LOGE(LOG_TAG, "RGB LED init failed: %s", esp_err_to_name(led_err));
   }
 
-  // Initialize flash and wifi
+  // Initialize flash, wifi and server task
   esp_err_t nvs_err = nvs_flash_init();
   if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
     ESP_ERROR_CHECK(nvs_flash_erase());
@@ -50,22 +50,23 @@ void app_main(void) {
   }
   ESP_ERROR_CHECK(nvs_err);
 
-  esp_err_t wifi_err = initialize_wifi();
-  if (wifi_err != ESP_OK) {
-    net_fail_loop(led_err);
+  if (initialize_wifi() != ESP_OK) {
+    fail_loop(led_err, true);
   }
 
-  // Initialize camera module and camera + server tasks
-  init_camera_task();
-  init_server_task();
+  if (init_server_task() != ESP_OK) {
+    fail_loop(led_err, true);
+  }
+
+  // Initialize camera module and camera task
+  if (init_camera_task() != ESP_OK) {
+    fail_loop(led_err, false);
+  }
 
   // Set color to green once everything is running
   if (led_err == ESP_OK) {
     set_rgb_led_color(0, 255, 0);
   }
 
-  // Temporary main loop
-  while (1) {
-    vTaskDelay(1000 / portTICK_PERIOD_MS); // Delay 1 second
-  }
+  // Note: even though main method returns, the tasks (at least command server) keep the firmware running
 }

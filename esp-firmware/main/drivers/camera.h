@@ -2,15 +2,9 @@
 
 #include "esp_check.h"
 
-#define MAX_CAMERA_PAYLOAD_SIZE 1024
-
-typedef struct __attribute__((packed)) {
-  uint8_t magic;
-  uint8_t msg_type;
-  uint32_t frame_id;
-  uint16_t chunk_idx;
-  uint16_t chunk_cnt;
-} camera_packet_t;
+// Camera image is split into chunks of this many bytes (+ header). Keeping total size below
+// 1400 bytes, should make sure that network layer doesn't have to fragment udp packages
+#define MAX_CAMERA_PAYLOAD_SIZE 1300
 
 esp_err_t init_camera(void);
 esp_err_t init_camera_task(void);

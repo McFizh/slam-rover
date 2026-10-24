@@ -33,10 +33,11 @@ esp_err_t init_camera(void) {
       .ledc_timer = LEDC_TIMER_0,
       .ledc_channel = LEDC_CHANNEL_1,
       .pixel_format = PIXFORMAT_JPEG,
-      .frame_size = FRAMESIZE_QVGA, // 320x240
-      .jpeg_quality = 12,           // 0 = best .. 63 = worst
-      .fb_count = 2,
+      .frame_size = FRAMESIZE_VGA,  // 640x480
+      .jpeg_quality = 20,           // 0 = best .. 63 = worst
+      .fb_count = 1,
       .fb_location = CAMERA_FB_IN_PSRAM,
+      // Camera captures new frame only when buffer is empty .. Adds delay, but reduces power consumption
       .grab_mode = CAMERA_GRAB_WHEN_EMPTY,
   };
 
@@ -69,23 +70,57 @@ static void send_frame(const struct sockaddr_in *dest, uint32_t frame_id, const 
     memcpy(chunk_ptr + sizeof(camera_packet_t), jpeg + src_offset, packet_len);
 
     // Send packet
-    if (sendto(camera_fd, chunk_ptr, sizeof(camera_packet_t) + packet_len, 0, (const struct sockaddr *)dest,
-               sizeof(*dest)) < 0) {
-      // Send failed, ignore rest of the chunks
-      return;
+    int retries = 0;
+    while (sendto(camera_fd, chunk_ptr, sizeof(camera_packet_t) + packet_len, 0, (const struct sockaddr *)dest,
+                  sizeof(*dest)) < 0) {
+
+      // ENOMEM / EAGAIN are errors that might resolve on their own after short delay (buffer is for example
+      // just temporarily full)
+      if (retries >= 5 || (errno != ENOMEM && errno != EAGAIN)) {
+        // Send failed, ignore rest of the chunks
+        ESP_LOGW(LOG_TAG, "Failed to send camera frame chunks, abandoning frame");
+        return;
+      }
+
+      retries++;
+      vTaskDelay(1);
     }
   }
 }
 
 static void camera_task(void *arg) {
   uint32_t frame_id = 0;
+  bool sending_frames = false;
+
+  // 50ms delay = 20 fps
+  const TickType_t frame_delay = pdMS_TO_TICKS(50);
+  TickType_t last_frame = xTaskGetTickCount();
 
   while (1) {
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    // Try to keep steady fps
+    if (xTaskDelayUntil(&last_frame, frame_delay) == pdFALSE) {
+      last_frame = xTaskGetTickCount();
+    }
 
     // Method returns false, if nothing is connected
     uint32_t client_ip;
     if (!server_get_client_ip(&client_ip)) {
+      if (sending_frames) {
+        ESP_LOGI(LOG_TAG, "Stopped sending camera frames");
+        sending_frames = false;
+      }
+      continue;
+    }
+
+    if (!sending_frames) {
+      ESP_LOGI(LOG_TAG, "Started sending camera frames");
+      sending_frames = true;
+
+      // Ditch the first frame, since it most likely is old
+      camera_fb_t *cam_fb = esp_camera_fb_get();
+      if (cam_fb)
+        esp_camera_fb_return(cam_fb);
+
       continue;
     }
 
